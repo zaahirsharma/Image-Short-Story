@@ -15,6 +15,7 @@ import os
 import numpy as np
 # For saving the audio file
 import soundfile as sf
+import torch
 
 # For loading speaker embeddings required for the TTS model
 from datasets import load_dataset
@@ -24,9 +25,31 @@ load_dotenv(find_dotenv())
 # Loading in the HUGGINGFACEHUB_API_TOKEN from the environment variables
 HUGGINGFACEHUB_API_TOKEN = os.getenv("HUGGINGFACEHUB_API_TOKEN") 
 
+# Determine the device first
+device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
+print(f"Device set to use {device}") # Now 'device' is defined here
+
 # Initialize the text-to-speech pipeline globally or within the function.
 # Initializing it globally outside the function is more efficient so the model is loaded only once.
 print("Loading Text-to-Speech model: microsoft/speecht5_tts")
+
+try:
+    tts_pipe = pipeline("text-to-audio", model="microsoft/speecht5_tts", device=device) # Pass device to pipeline
+    print("Text-to-Speech model loaded successfully.")
+    
+    # Load speaker embeddings for the TTS model
+    print("Loading speaker embeddings for the TTS model...")
+    embeddings = load_dataset("Matthijs/cmu-arctic-xvectors", split="validation")
+    
+    # Convert to PyTorch tensor and move to device
+    global_speaker_embedding = torch.tensor(embeddings[7306]["xvector"], dtype=torch.float32).unsqueeze(0).to(device)
+    
+    print("Speaker embeddings loaded successfully.")
+except Exception as e:
+    print(f"Error loading Text-to-Speech model: {e}")
+    tts_pipe = None 
+    global_speaker_embedding = None
+    sys.exit()    
 # This will download the model the first time you run it.
 try:
     tts_pipe = pipeline("text-to-audio", model="microsoft/speecht5_tts")
@@ -35,7 +58,7 @@ try:
     print("Loading speaker embeddings for the TTS model...")
     # Dataset contains pre-computed speaker embeddings
     embeddings = load_dataset("Matthijs/cmu-arctic-xvectors", split="validation")
-    global_speaker_embedding = np.array(embeddings[7306]["xvector"])
+    global_speaker_embedding = torch.tensor(embeddings[7306]["xvector"], dtype=torch.float32).unsqueeze(0).to(device)
     print("Speaker embeddings loaded successfully.")
 except Exception as e:
     print(f"Error loading Text-to-Speech model: {e}")
@@ -115,7 +138,7 @@ def text2Speech(story):
     print("Converting story to speech...")
     try:
         # Pass speaker embedding using forward_params
-        tts_output = tts_pipe(story, forward_params={"speaker_embedding": global_speaker_embedding})
+        tts_output = tts_pipe(story, forward_params={"speaker_embeddings": global_speaker_embedding})
         
         # Access the audio data and sampling rate
         audio_array = tts_output["audio"]
